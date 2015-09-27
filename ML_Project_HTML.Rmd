@@ -1,0 +1,91 @@
+---
+title: "ML Project - Shay"
+author: "Shay O'Reilly"
+date: "September 26, 2015"
+output: html_document
+---
+## Introduction
+
+This describe my attempt to build a machine learning algorithm that will predict the class of user activity given accelerometer data collected from six participants.  
+
+First I load the data:
+```{r,echo=FALSE}
+# Loand libraries
+library(caret)
+library(AppliedPredictiveModeling)
+# -------- Tree
+library(rpart)				        # Popular decision tree algorithm
+library(rattle)					# Fancy tree plot
+library(rpart.plot)				# Enhanced tree plots
+library(RColorBrewer)				# Color selection for fancy tree plot
+library(party)					# Alternative decision tree algorithm
+#?library(partykit)				# Convert rpart object to BinaryTree
+```
+
+```{r}
+# read training file
+train <- read.csv("./pml-training.csv")
+
+```
+
+## Data cleaning and feature selection
+
+Next I inspect the data to get a sense of the actual values. It's apparent several columns have the almost all NAs or the same value. So I looked at how often the most common value appeared in order to possibly exclude these columns and simplify the model construction.
+
+```{r}
+# Iterate through columns and determine how often most common (which is the first item in a table) item appears
+mode_share <- as.numeric(sapply(train, function(y) (table(y)[1]/length(y))))
+# Get the value of that most common term
+mode_value <-  (sapply(train, function(y) names((table(y)[1]) ) ))
+#Combine
+modes <- data.frame(cbind(mode_share,mode_value))#
+modes$mode_share2 <- as.numeric(as.character(modes$mode_share))
+```
+
+Now explore this frequency. 
+```{r}
+hist(modes$mode_share2,breaks=seq(0,1,.01))
+```
+
+34 columns have the same value 97% of the time. I decide to remove these as the lack of variation will make them less useful. I also repeat the same exercise for columns with a large number of NAs. Lastly I remove the first 5 columns. The first column is just a row number. Columns 2 through 4 are timestampe (raw_timestamp_part_1 and raw_timestamep_part2 and cvtd_timestamp). I also choose to remove the fifth column username.
+
+```{r, echo=FALSE}
+# remove features that have high mode (ie .9793)
+good_cols <- modes$mode_share2<.97
+train_goodCols <- train[,good_cols]
+
+na_count <- sapply(train_goodCols, function(y) (sum(is.na(y)))/length(y)) # for each column % of entries taht are na
+good_colsNA <- na_count < .97
+train_goodColsNA <- train_goodCols[,good_colsNA]
+train_goodColsNA_Picked <- train_goodColsNA[,6:length(train_goodColsNA)]
+train_goodColsNA_Picked_ExClasse <- train_goodColsNA_Picked[,1:(length(train_goodColsNA_Picked)-1)]
+```
+
+## Model Development
+
+Having done this basic feature selection I move on to model development. My cleaned data set is called 'train_goodColsNA_Picked'. I choose a regression tree via the caret package's train function. I choose cross validation with 10 folds.
+
+```{r}
+train_control <- trainControl(method="cv", number=10)
+modRPartFolds <- train(classe~.,method="rpart",data=train_goodColsNA_Picked,trControl=train_control)
+RPart_Prediction  <- predict(modRPartFolds,train_goodColsNA_Picked,type="raw")
+```
+
+The tree illustrated:
+```{r,echo=FALSE}
+fancyRpartPlot(modRPartFolds$finalModel)
+```
+
+The confusion matrix shows a surprisingly poor accuracy of 49%. It notes the confidence interval is 48.9% to 50.3%.
+```{r}
+TreeResults<- confusionMatrix(RPart_Prediction,train_goodColsNA_Picked$classe)
+TreeResults$overall
+```
+
+
+## Conclusion
+
+This model does not predict well and I will look to iterate to improve.
+NEXT: Split train into sub train and test
+NEXT: Try different models, possibly add by user
+NEXT: Try PCA?
