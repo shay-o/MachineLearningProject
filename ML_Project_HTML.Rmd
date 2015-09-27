@@ -9,7 +9,7 @@ output: html_document
 This describe my attempt to build a machine learning algorithm that will predict the class of user activity given accelerometer data collected from six participants.  
 
 First I load the data:
-```{r,echo=FALSE}
+```{r,echo=FALSE, include=FALSE}
 # Loand libraries
 library(caret)
 library(AppliedPredictiveModeling)
@@ -47,45 +47,81 @@ Now explore this frequency.
 hist(modes$mode_share2,breaks=seq(0,1,.01))
 ```
 
-34 columns have the same value 97% of the time. I decide to remove these as the lack of variation will make them less useful. I also repeat the same exercise for columns with a large number of NAs. Lastly I remove the first 5 columns. The first column is just a row number. Columns 2 through 4 are timestampe (raw_timestamp_part_1 and raw_timestamep_part2 and cvtd_timestamp). I also choose to remove the fifth column username.
+34 columns have the same value 97% of the time. I decide to remove these as the lack of variation will make them less useful. I also repeat the same exercise for columns with a large number of NAs. Lastly I remove the first column which is just row number (but does correlate with the exercise type so may mislead a model). I also remove columns 2 through 4 are timestamps (raw_timestamp_part_1 and raw_timestamep_part2 and cvtd_timestamp). 
 
 ```{r, echo=FALSE}
 # remove features that have high mode (ie .9793)
 good_cols <- modes$mode_share2<.97
 train_goodCols <- train[,good_cols]
 
-na_count <- sapply(train_goodCols, function(y) (sum(is.na(y)))/length(y)) # for each column % of entries taht are na
+# for each column % of entries taht are na
+na_count <- sapply(train_goodCols, function(y) (sum(is.na(y)))/length(y)) 
 good_colsNA <- na_count < .97
 train_goodColsNA <- train_goodCols[,good_colsNA]
-train_goodColsNA_Picked <- train_goodColsNA[,6:length(train_goodColsNA)]
-train_goodColsNA_Picked_ExClasse <- train_goodColsNA_Picked[,1:(length(train_goodColsNA_Picked)-1)]
+
+# remove just x (row) and timestamps
+train_goodColsNA_wUser <- train_goodColsNA[,c(2,6:length(train_goodColsNA))]
+# # remove cols 1:5
+# train_goodColsNA_Picked <- train_goodColsNA[,6:length(train_goodColsNA)]
+# train_goodColsNA_Picked_ExClasse <- train_goodColsNA_Picked[,1:(length(train_goodColsNA_Picked)-1)]
+
+# Final data set is called "Cleaned"
+Cleaned <- train_goodColsNA_wUser
 ```
 
 ## Model Development
 
-Having done this basic feature selection I move on to model development. My cleaned data set is called 'train_goodColsNA_Picked'. I choose a regression tree via the caret package's train function. I choose cross validation with 10 folds.
+First split the training further into training and test.
 
 ```{r}
-train_control <- trainControl(method="cv", number=10)
-modRPartFolds <- train(classe~.,method="rpart",data=train_goodColsNA_Picked,trControl=train_control)
-RPart_Prediction  <- predict(modRPartFolds,train_goodColsNA_Picked,type="raw")
+trainIndex <- createDataPartition(train$classe, p= .8, list=FALSE, times=1)
+Cleaned_Train <- train_goodColsNA_wUser[trainIndex,]
+Cleaned_Test <- train_goodColsNA_wUser[-trainIndex,]
 ```
 
-The tree illustrated:
-```{r,echo=FALSE}
-fancyRpartPlot(modRPartFolds$finalModel)
-```
+# Regression Tree
+Having done this basic feature selection I move on to model development. My cleaned data set is called'Cleaned'. I choose a regression tree ("rpart") via the caret package's train function. I choose cross validation with 10 folds.
 
-The confusion matrix shows a surprisingly poor accuracy of 49%. It notes the confidence interval is 48.9% to 50.3%.
 ```{r}
-TreeResults<- confusionMatrix(RPart_Prediction,train_goodColsNA_Picked$classe)
-TreeResults$overall
+# --- Tree w defualt levels
+
+modRPart <- train(classe~.,method="rpart",data=Cleaned_Train)
+RPart_Prediction  <- predict(modRPart,Cleaned_Train,type="raw") 
+TreeResults<- confusionMatrix(RPart_Prediction,Cleaned_Train$classe)
+TreeResults$overall[c(1,3:4)]
 ```
 
+The confusion matrix shows a surprisingly poor accuracy of 49%. It notes the confidence interval is 48.9% to 50.3%. I try more levels to see how this improves accuracy.
 
-## Conclusion
+```{r}
+# --- Tree w 20 levels.
+modRPart3 <- train(classe~.,method="rpart",data=Cleaned_Train,tuneLength=20)
 
-This model does not predict well and I will look to iterate to improve.
-NEXT: Split train into sub train and test
-NEXT: Try different models, possibly add by user
-NEXT: Try PCA?
+RPart_Prediction_20  <- predict(modRPart3,Cleaned_Train,type="raw") 
+TreeResults20<- confusionMatrix(RPart_Prediction_20,Cleaned_Train$classe)
+TreeResults20$overall[c(1,3:4)]
+```
+
+Accuracy improves to 79% and uses only 12 of the 20 available levels. So I decide to try a different model - a tree with bootstrap aggregation.
+
+```{r}
+modTreeBag <- train(classe~.,method="treebag",data=Cleaned_Train)
+
+TreeBag_Prediction  <- predict(modTreeBag,Cleaned_Train,type="raw") 
+TreeBagResultsBag<- confusionMatrix(TreeBag_Prediction,Cleaned_Train$classe)
+TreeBagResultsBag$overall[c(1,3:4)]
+```
+
+This has near perfect accuracy. 
+
+## Out of sample error
+
+The "treebag" already estimates a 95% confidence interval for accuracy of .999-1.000. I run this against the test set get my own data estimate.
+
+```{r}
+TreeBag_Prediction_Test  <- predict(modTreeBag,Cleaned_Test,type="raw") 
+TreeResultsTest<- confusionMatrix(TreeBag_Prediction_Test,Cleaned_Test$classe)
+TreeResultsTest$overall[c(1,3:4)]
+```
+
+Accuracy is somewhat lower as expected - 99.2% with a range of .989 to .994. This is still quite good so I decide to use this model.
